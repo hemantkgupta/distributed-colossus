@@ -2,4 +2,8 @@ dependencies {
     implementation project(':colossus-common')
     implementation project(':colossus-dmclock')
     implementation project(':colossus-bigtable')
+    // Shared cluster-membership table (dserver.status.*) lives in placement so the data plane
+    // (writer) and both control planes (readers) reuse one schema. placement is a shared lib,
+    // not control plane — the data ⟂ control invariant holds.
+    implementation project(':colossus-placement')
 }
