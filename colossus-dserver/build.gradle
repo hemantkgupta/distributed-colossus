@@ -1,0 +1,5 @@
+dependencies {
+    implementation project(':colossus-common')
+    implementation project(':colossus-dmclock')
+    implementation project(':colossus-bigtable')
+}

@@ -1,0 +1,38 @@
+plugins {
+    id 'java'
+}
+
+allprojects {
+    group = 'colossus'
+    version = '1.0-SNAPSHOT'
+}
+
+subprojects {
+    apply plugin: 'java'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(17)
+        }
+    }
+
+    // -parameters keeps record component / constructor parameter names in the
+    // class file; harmless here, consistent with the GFS/RADOS sibling repos.
+    tasks.withType(JavaCompile).configureEach {
+        options.compilerArgs << '-parameters'
+    }
+
+    repositories {
+        mavenCentral()
+    }
+
+    dependencies {
+        testImplementation 'org.junit.jupiter:junit-jupiter:5.9.3'
+        testImplementation 'org.assertj:assertj-core:3.24.2'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+
+    test {
+        useJUnitPlatform()
+    }
+}

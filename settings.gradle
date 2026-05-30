@@ -1,0 +1,20 @@
+rootProject.name = 'distributed-colossus'
+
+// Foundation
+include 'colossus-common'      // value types + wire format
+include 'colossus-dmclock'     // R/W/L QoS scheduler (data-plane lib)
+
+// Metadata substrate
+include 'colossus-bigtable'    // pedagogical row + column-family KV
+include 'colossus-placement'   // hash-to-PG + PG-to-D-server lookup
+
+// Control plane
+include 'colossus-curator'     // stateless namespace shard owner
+include 'colossus-custodian'   // background reconciler control plane
+
+// Data plane
+include 'colossus-dserver'     // data-plane daemon
+
+// Public API + harness
+include 'colossus-client'      // public API
+include 'colossus-simulator'   // multi-process chaos harness

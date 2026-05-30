@@ -1,0 +1,4 @@
+dependencies {
+    implementation project(':colossus-common')
+    implementation project(':colossus-bigtable')
+}
