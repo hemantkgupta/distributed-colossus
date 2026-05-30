@@ -40,6 +40,8 @@ public final class CuratorShard {
     private final Clock clock;
     private final long cacheTtlSeconds;
 
+    private static final int MAX_ALLOCATE_RETRIES = 256;
+
     private final java.util.Map<FilePath, CachedStat> statCache = new java.util.concurrent.ConcurrentHashMap<>();
     private final AtomicLong coldFetches = new AtomicLong();
     private final AtomicLong cacheHits = new AtomicLong();
@@ -124,11 +126,6 @@ public final class CuratorShard {
      * and record the chunk + locations + lease atomically in one CAS on the file row.
      */
     public Results.AllocateChunkResult allocateChunk(FilePath path) {
-        Row row = bt.getRow(path.toRowKey())
-                .filter(r -> r.get(NamespaceCodec.META_SIZE).isPresent())
-                .orElseThrow(() -> new FileNotFoundException(path));
-        int index = row.family("chunks").size();
-
         ChunkHandle handle = ChunkHandle.of(handleSeq.getAndIncrement());
         PgId pg = router.placementGroupFor(handle.hex());
         PgPlacement placed = placement.ensure(pg);
@@ -139,18 +136,27 @@ public final class CuratorShard {
         LeaseToken lease = new LeaseToken(handle, dservers.get(0), now,
                 now.plusSeconds(java.time.Duration.ofMinutes(1).toSeconds()));
 
-        boolean ok = bt.checkAndMutate(path.toRowKey(),
-                List.of(Condition.expectAbsent(NamespaceCodec.chunkAt(index))),
-                List.of(
-                        Mutation.put(NamespaceCodec.chunkAt(index), t, NamespaceCodec.handleBytes(handle)),
-                        Mutation.put(NamespaceCodec.locationsOf(handle), t, NamespaceCodec.dserverListBytes(dservers)),
-                        Mutation.put(NamespaceCodec.leaseOf(handle), t, NamespaceCodec.leaseBytes(lease)),
-                        Mutation.put(NamespaceCodec.META_MTIME, t, NamespaceCodec.longBytes(now.toEpochMilli()))));
-        if (!ok) {
-            throw new ConcurrentAllocationException(path, index);
+        // The chunk index is the next free slot. Under concurrent appenders two callers may read the
+        // same index; the create-if-absent CAS lets exactly one win, and the loser retries against
+        // the now-higher index. The handle is independent of the index, so we keep it across retries.
+        for (int attempt = 0; attempt < MAX_ALLOCATE_RETRIES; attempt++) {
+            Row row = bt.getRow(path.toRowKey())
+                    .filter(r -> r.get(NamespaceCodec.META_SIZE).isPresent())
+                    .orElseThrow(() -> new FileNotFoundException(path));
+            int index = row.family("chunks").size();
+            boolean ok = bt.checkAndMutate(path.toRowKey(),
+                    List.of(Condition.expectAbsent(NamespaceCodec.chunkAt(index))),
+                    List.of(
+                            Mutation.put(NamespaceCodec.chunkAt(index), t, NamespaceCodec.handleBytes(handle)),
+                            Mutation.put(NamespaceCodec.locationsOf(handle), t, NamespaceCodec.dserverListBytes(dservers)),
+                            Mutation.put(NamespaceCodec.leaseOf(handle), t, NamespaceCodec.leaseBytes(lease)),
+                            Mutation.put(NamespaceCodec.META_MTIME, t, NamespaceCodec.longBytes(now.toEpochMilli()))));
+            if (ok) {
+                invalidate(path);
+                return new Results.AllocateChunkResult(handle, index, dservers, lease, placed.epoch());
+            }
         }
-        invalidate(path);
-        return new Results.AllocateChunkResult(handle, index, dservers, lease, placed.epoch());
+        throw new ConcurrentAllocationException(path, -1);
     }
 
     /** Resolve a chunk index to its handle, replica set, placement epoch, and current lease. */

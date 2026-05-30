@@ -35,7 +35,6 @@ public final class Dserver {
     private final DserverStatusTable statusTable; // nullable in unit tests
     private final long diskFreeBytes;
 
-    private volatile Dserver downstream; // next node in the daisy chain
     private final ConcurrentHashMap<ChunkHandle, PendingWrite> pending = new ConcurrentHashMap<>();
     private final Set<ChunkHandle> hosted = ConcurrentHashMap.newKeySet();
     private final AtomicLong reqSeq = new AtomicLong();
@@ -73,12 +72,12 @@ public final class Dserver {
         return scheduler;
     }
 
-    public void setDownstream(Dserver downstream) {
-        this.downstream = downstream;
-    }
-
     public int hostedExtentCount() {
         return hosted.size();
+    }
+
+    public Set<ChunkHandle> hostedHandles() {
+        return Set.copyOf(hosted);
     }
 
     private void schedule(Lane lane, int ioBytes) {
@@ -86,36 +85,46 @@ public final class Dserver {
     }
 
     // ---- CP21 daisy chain ----
+    // The replica chain is passed explicitly per write: a client writing to different PGs uses
+    // different replica sets, so the downstream link cannot be a persistent field on the D-server.
 
-    /** Stage bytes locally and forward down the chain. The whole chain buffers before any commit. */
     public void pushBytes(ChunkHandle handle, long offset, byte[] bytes) {
+        pushBytes(handle, offset, bytes, java.util.List.of());
+    }
+
+    /** Stage bytes locally and forward to the next node in {@code tail}. The whole chain buffers. */
+    public void pushBytes(ChunkHandle handle, long offset, byte[] bytes, java.util.List<Dserver> tail) {
         pending.put(handle, new PendingWrite(offset, bytes));
         schedule(Lane.FOREGROUND, bytes.length);
-        if (downstream != null) {
-            downstream.pushBytes(handle, offset, bytes);
+        if (!tail.isEmpty()) {
+            tail.get(0).pushBytes(handle, offset, bytes, tail.subList(1, tail.size()));
         }
+    }
+
+    public long commitWrite(ChunkHandle handle, Instant now) {
+        return commitWrite(handle, now, java.util.List.of());
     }
 
     /**
      * Primary commit: assign a serial under the lease, apply locally (fsync), and forward the commit
-     * down the chain. Returns the assigned serial once every replica has applied.
+     * down {@code tail}. Returns the assigned serial once every replica has applied.
      */
-    public long commitWrite(ChunkHandle handle, Instant now) {
+    public long commitWrite(ChunkHandle handle, Instant now, java.util.List<Dserver> tail) {
         long serial = leaseHolder.nextSerial(handle, now); // rejects if not the lease holder
-        applyCommit(handle, serial);
+        applyCommit(handle, serial, tail);
         return serial;
     }
 
     /** Apply a committed write at this replica and forward to the next (secondary/tertiary path). */
-    public void applyCommit(ChunkHandle handle, long serial) {
+    public void applyCommit(ChunkHandle handle, long serial, java.util.List<Dserver> tail) {
         PendingWrite w = pending.remove(handle);
         if (w != null) {
             store.writeAt(handle, w.offset(), w.bytes());
             schedule(Lane.FOREGROUND, w.bytes().length);
             hosted.add(handle);
         }
-        if (downstream != null) {
-            downstream.applyCommit(handle, serial);
+        if (!tail.isEmpty()) {
+            tail.get(0).applyCommit(handle, serial, tail.subList(1, tail.size()));
         }
     }
 

@@ -2,4 +2,10 @@ dependencies {
     implementation project(':colossus-common')
     implementation project(':colossus-bigtable')
     implementation project(':colossus-placement')
+    // In-process the client is a façade that orchestrates both planes: it asks a Curator for
+    // metadata and drives the daisy chain across D-servers. A real client reaches them by RPC; here
+    // it holds references via the ClusterView seam. Talking to both planes does not violate the
+    // data ⟂ control invariant (a client legitimately uses both).
+    implementation project(':colossus-curator')
+    implementation project(':colossus-dserver')
 }

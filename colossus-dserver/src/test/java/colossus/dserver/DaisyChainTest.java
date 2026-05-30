@@ -19,7 +19,7 @@ class DaisyChainTest {
     private final Instant t0 = Instant.parse("2026-01-01T00:00:00Z");
     private final ChunkHandle h = ChunkHandle.of(0x4242);
 
-    /** Build a 3-node chain primary -> secondary -> tertiary, each with its own extent store. */
+    /** Build 3 D-servers; the chain order is passed explicitly per write as the tail [d1, d2]. */
     private List<Dserver> chain(Path dir) {
         List<Dserver> nodes = new ArrayList<>();
         for (int i = 0; i < 3; i++) {
@@ -28,9 +28,11 @@ class DaisyChainTest {
                     Dserver.defaultScheduler(), null, 1_000_000_000L);
             nodes.add(d);
         }
-        nodes.get(0).setDownstream(nodes.get(1));
-        nodes.get(1).setDownstream(nodes.get(2));
         return nodes;
+    }
+
+    private List<Dserver> tail(List<Dserver> nodes) {
+        return nodes.subList(1, nodes.size());
     }
 
     @Test
@@ -40,8 +42,8 @@ class DaisyChainTest {
         primary.leaseHolder().grant(new LeaseToken(h, primary.id(), t0, t0.plusSeconds(60)));
 
         byte[] payload = "daisy-chain-bytes".getBytes();
-        primary.pushBytes(h, 0, payload);          // buffers down the whole chain
-        long serial = primary.commitWrite(h, t0);  // applies + fsyncs at each node
+        primary.pushBytes(h, 0, payload, tail(nodes));          // buffers down the whole chain
+        long serial = primary.commitWrite(h, t0, tail(nodes));  // applies + fsyncs at each node
 
         assertThat(serial).isEqualTo(1);
         for (Dserver d : nodes) {
@@ -57,10 +59,10 @@ class DaisyChainTest {
         Dserver primary = nodes.get(0);
         primary.leaseHolder().grant(new LeaseToken(h, primary.id(), t0, t0.plusSeconds(60)));
 
-        primary.pushBytes(h, 0, new byte[]{1});
-        assertThat(primary.commitWrite(h, t0)).isEqualTo(1);
-        primary.pushBytes(h, 0, new byte[]{2});
-        assertThat(primary.commitWrite(h, t0)).isEqualTo(2);
+        primary.pushBytes(h, 0, new byte[]{1}, tail(nodes));
+        assertThat(primary.commitWrite(h, t0, tail(nodes))).isEqualTo(1);
+        primary.pushBytes(h, 0, new byte[]{2}, tail(nodes));
+        assertThat(primary.commitWrite(h, t0, tail(nodes))).isEqualTo(2);
     }
 
     @Test
@@ -77,7 +79,7 @@ class DaisyChainTest {
         List<Dserver> nodes = chain(dir);
         Dserver primary = nodes.get(0);
         primary.leaseHolder().grant(new LeaseToken(h, primary.id(), t0, t0.plusSeconds(60)));
-        primary.pushBytes(h, 0, new byte[]{1, 2, 3});
+        primary.pushBytes(h, 0, new byte[]{1, 2, 3}, tail(nodes));
         // Bytes are buffered everywhere but committed nowhere yet.
         for (Dserver d : nodes) {
             assertThat(d.peekPending(h)).isPresent();
