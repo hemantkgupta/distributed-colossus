@@ -188,4 +188,39 @@ class SimulatorIntegrationTest {
         faults.healTabletServers();
         assertThat(client.create(FilePath.of("/data/new2"), "bob")).isTrue();
     }
+
+    @Test
+    void deleteThenGcReclaimsTheExtents(@TempDir Path dir) {
+        SimClock clock = new SimClock(t0);
+        Cluster cluster = new Cluster(dir, clock, 5, 3, CHUNK, 15);
+        cluster.addCurator("c1").assumeShard("/");
+        cluster.heartbeatDservers(t0);
+        ColossusClient client = cluster.client();
+
+        FilePath path = FilePath.of("/data/doomed");
+        client.create(path, "alice");
+        client.append(path, "to-be-deleted".getBytes());
+
+        // Find the chunk's replica set; its extents are now hosted on those D-servers.
+        var loc = cluster.curators().get(0).shardFor(path).orElseThrow().getChunkLocations(path, 0).orElseThrow();
+        var handle = loc.handle();
+        for (DserverId d : loc.dservers()) {
+            assertThat(cluster.dserver(d).hostedHandles()).contains(handle);
+        }
+
+        // Delete is a metadata tombstone — the bytes are still on disk right after.
+        assertThat(client.delete(path)).isTrue();
+        for (DserverId d : loc.dservers()) {
+            assertThat(cluster.dserver(d).hostedHandles()).contains(handle);
+        }
+
+        // The Custodian's GC sweep reclaims the now-orphaned extents.
+        List<colossus.common.ChunkHandle> reclaimed = cluster.gcTick();
+        assertThat(reclaimed).contains(handle);
+        for (DserverId d : loc.dservers()) {
+            assertThat(cluster.dserver(d).hostedHandles()).doesNotContain(handle);
+        }
+        // A second sweep finds nothing left to do.
+        assertThat(cluster.gcTick()).isEmpty();
+    }
 }

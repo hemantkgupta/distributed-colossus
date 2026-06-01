@@ -80,6 +80,12 @@ public final class Dserver {
         return Set.copyOf(hosted);
     }
 
+    /** Reclaim an extent the Custodian's GC loop found orphaned: delete the files and forget it. */
+    public void dropExtent(ChunkHandle handle) {
+        store.delete(handle);
+        hosted.remove(handle);
+    }
+
     private void schedule(Lane lane, int ioBytes) {
         scheduler.submit(new Request(lane, ioBytes, reqSeq.getAndIncrement()));
     }

@@ -199,8 +199,56 @@ public final class CuratorShard {
         return ok;
     }
 
+    // ---- CP27: extent sealing (the precondition for erasure coding) ----
+
+    /**
+     * Seal a chunk: mark it immutable and release its lease. A sealed extent will never be appended
+     * again, which is what makes it safe to erasure-code (the Custodian's tier loop). Idempotent:
+     * returns false if it was already sealed. Sealing is a single CAS on the file row plus a lease revoke.
+     */
+    public boolean seal(FilePath path, ChunkHandle handle) {
+        if (isSealed(path, handle)) {
+            return false;
+        }
+        long t = clock.instant().toEpochMilli();
+        // One atomic row CAS: set the sealed marker AND revoke the lease. (Deleting the lease here,
+        // at the clock timestamp, rather than via LeaseManager — whose own counter would be below the
+        // allocate-time lease write and so wouldn't supersede it.)
+        boolean ok = bt.checkAndMutate(path.toRowKey(),
+                List.of(Condition.expectAbsent(NamespaceCodec.sealedOf(handle))),
+                List.of(Mutation.put(NamespaceCodec.sealedOf(handle), t, new byte[]{1}),
+                        Mutation.delete(NamespaceCodec.leaseOf(handle), t)));
+        if (ok) {
+            invalidate(path);
+        }
+        return ok;
+    }
+
+    public boolean isSealed(FilePath path, ChunkHandle handle) {
+        return bt.get(path.toRowKey(), NamespaceCodec.sealedOf(handle)).isPresent();
+    }
+
+    /**
+     * Renew the lease on a chunk for continued writing — rejected once the chunk is sealed, because a
+     * sealed extent is immutable. This is the metadata-side guard; the D-server side already rejects a
+     * commit with no valid lease, so a sealed chunk is doubly fenced against further writes.
+     */
+    public Optional<LeaseToken> renewLease(FilePath path, ChunkHandle handle) {
+        if (isSealed(path, handle)) {
+            throw new SealedExtentException(handle);
+        }
+        return leases.renew(path, handle, clock.instant());
+    }
+
     public LeaseManager leases() {
         return leases;
+    }
+
+    /** Thrown when a write or lease renewal is attempted on a sealed (immutable) extent. */
+    public static final class SealedExtentException extends RuntimeException {
+        public SealedExtentException(ChunkHandle handle) {
+            super("extent is sealed (immutable): " + handle.hex());
+        }
     }
 
     /** Thrown when a chunk-index slot was taken by a concurrent allocation (CAS miss). */

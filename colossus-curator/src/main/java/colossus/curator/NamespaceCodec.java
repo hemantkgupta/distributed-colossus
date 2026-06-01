@@ -38,6 +38,14 @@ public final class NamespaceCodec {
         return ColumnKey.of("lease", h.hex());
     }
 
+    /** Per-chunk immutability marker. Present (value 1) = the extent is sealed and will never be appended again. */
+    public static ColumnKey sealedOf(ChunkHandle h) {
+        return ColumnKey.of("sealed", h.hex());
+    }
+
+    /** Cross-shard rename marker. Present on a source row = the row is mid-rename (state RENAMING); value = target path. */
+    public static final ColumnKey RENAME_TARGET = ColumnKey.of("meta", "rename_target");
+
     public static final ColumnKey SCRUB_LAST = ColumnKey.of("scrub", "last_completed");
 
     // ---- value codecs ----

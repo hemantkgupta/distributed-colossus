@@ -1,0 +1,4 @@
+dependencies {
+    // Pure algorithm module — GF(2^8) arithmetic + Reed–Solomon over it.
+    // Deliberately dependency-free: nothing from colossus-common is needed.
+}

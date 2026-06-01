@@ -14,6 +14,7 @@ import colossus.curator.LeaseManager;
 import colossus.curator.PlacementProvider;
 import colossus.curator.ShardOwnershipRegistry;
 import colossus.custodian.Custodian;
+import colossus.custodian.GarbageCollector;
 import colossus.custodian.WorkDispatcher;
 import colossus.custodian.WorkItem;
 import colossus.dmclock.DurabilityEscalator;
@@ -104,6 +105,28 @@ public final class Cluster implements ClusterView {
 
     public ColossusClient client() {
         return new ColossusClient(this, chunkSize);
+    }
+
+    /**
+     * Run the Custodian's garbage-collection sweep: for each live D-server, detect extents no live
+     * file row references (orphans from a delete, or a returned partition's stragglers) and reclaim
+     * them. Detection is the Custodian's {@link GarbageCollector}; the byte deletion is on the
+     * D-server. Returns the handles reclaimed.
+     */
+    public List<ChunkHandle> gcTick() {
+        List<ChunkHandle> reclaimed = new ArrayList<>();
+        for (var e : dservers.entrySet()) {
+            if (dead.contains(e.getKey())) {
+                continue;
+            }
+            Dserver d = e.getValue();
+            GarbageCollector gc = new GarbageCollector(bt, e.getKey(), router);
+            for (ChunkHandle orphan : gc.findOrphans(d.hostedHandles(), "/")) {
+                d.dropExtent(orphan);
+                reclaimed.add(orphan);
+            }
+        }
+        return reclaimed;
     }
 
     // ---- lifecycle / fault helpers ----

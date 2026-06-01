@@ -17,7 +17,8 @@ public record WorkItem(Op op, PgId pg, Optional<DserverId> source, Optional<Dser
         REPAIR_COPY,    // re-replicate a PG's extents onto a fresh target
         SCRUB,          // deep-verify CRCs across replicas
         REBALANCE_MOVE, // migrate extents off a hot D-server
-        TIER_DOWN       // (v1: logs the decision only)
+        TIER_DOWN,      // (v1: logs the decision only)
+        DELETE_EXTENT   // reclaim an orphaned extent from a D-server (no live file row references it)
     }
 
     /** Maps to a dmClock lane at the target D-server. */
@@ -40,5 +41,9 @@ public record WorkItem(Op op, PgId pg, Optional<DserverId> source, Optional<Dser
 
     public static WorkItem tierDown(PgId pg) {
         return new WorkItem(Op.TIER_DOWN, pg, Optional.empty(), Optional.empty(), Priority.BACKGROUND);
+    }
+
+    public static WorkItem deleteExtent(PgId pg, DserverId target) {
+        return new WorkItem(Op.DELETE_EXTENT, pg, Optional.empty(), Optional.of(target), Priority.BACKGROUND);
     }
 }

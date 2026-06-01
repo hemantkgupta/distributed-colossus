@@ -3,6 +3,7 @@ rootProject.name = 'distributed-colossus'
 // Foundation
 include 'colossus-common'      // value types + wire format
 include 'colossus-dmclock'     // R/W/L QoS scheduler (data-plane lib)
+include 'colossus-erasure'     // Reed–Solomon RS(6,3) over GF(2^8)
 
 // Metadata substrate
 include 'colossus-bigtable'    // pedagogical row + column-family KV
