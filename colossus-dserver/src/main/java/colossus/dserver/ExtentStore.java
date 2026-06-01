@@ -146,6 +146,52 @@ public final class ExtentStore {
         }
     }
 
+    // ---- CP33: erasure-coded fragment storage (one file per RS fragment) ----
+
+    private Path fragData(ChunkHandle h, int i) {
+        return dataDir.resolve(h.hex() + ".f" + i + ".ext");
+    }
+
+    private Path fragCrc(ChunkHandle h, int i) {
+        return dataDir.resolve(h.hex() + ".f" + i + ".crc");
+    }
+
+    /** Store one RS fragment (a whole shard) with a CRC sidecar, fsync'd before returning. */
+    public void writeFragment(ChunkHandle h, int fragmentIndex, byte[] bytes) {
+        try (RandomAccessFile data = new RandomAccessFile(fragData(h, fragmentIndex).toFile(), "rw");
+             RandomAccessFile crc = new RandomAccessFile(fragCrc(h, fragmentIndex).toFile(), "rw")) {
+            data.setLength(0);
+            data.write(bytes);
+            crc.setLength(0);
+            crc.writeInt(Crc32c.of(bytes));
+            if (fsync) {
+                data.getFD().sync();
+                crc.getFD().sync();
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("writeFragment " + h.hex() + ".f" + fragmentIndex, e);
+        }
+    }
+
+    public boolean hasFragment(ChunkHandle h, int fragmentIndex) {
+        return Files.exists(fragData(h, fragmentIndex));
+    }
+
+    /** Read an RS fragment, verifying its CRC. */
+    public byte[] readFragment(ChunkHandle h, int fragmentIndex) {
+        try (RandomAccessFile data = new RandomAccessFile(fragData(h, fragmentIndex).toFile(), "r");
+             RandomAccessFile crc = new RandomAccessFile(fragCrc(h, fragmentIndex).toFile(), "r")) {
+            byte[] b = new byte[(int) data.length()];
+            data.readFully(b);
+            if (crc.readInt() != Crc32c.of(b)) {
+                throw new CorruptionException(h, fragmentIndex);
+            }
+            return b;
+        } catch (IOException e) {
+            throw new UncheckedIOException("readFragment " + h.hex() + ".f" + fragmentIndex, e);
+        }
+    }
+
     /** Thrown when a read's CRC check fails — the on-disk bytes do not match their stored CRC. */
     public static final class CorruptionException extends RuntimeException {
         public CorruptionException(ChunkHandle h, long offset) {

@@ -3,6 +3,7 @@ dependencies {
     implementation project(':colossus-bigtable')
     implementation project(':colossus-placement')
     implementation project(':colossus-dmclock')
+    implementation project(':colossus-erasure')
     implementation project(':colossus-dserver')
     implementation project(':colossus-curator')
     implementation project(':colossus-custodian')

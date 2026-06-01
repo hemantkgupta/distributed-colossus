@@ -223,4 +223,45 @@ class SimulatorIntegrationTest {
         // A second sweep finds nothing left to do.
         assertThat(cluster.gcTick()).isEmpty();
     }
+
+    @Test
+    void sealThenErasureCodeThenDegradedRead(@TempDir Path dir) {
+        SimClock clock = new SimClock(t0);
+        Cluster cluster = new Cluster(dir, clock, 9, 3, 4096, 15); // 9 D-servers for 9 fragments
+        cluster.addCurator("c1").assumeShard("/");
+        cluster.heartbeatDservers(t0);
+        ColossusClient client = cluster.client();
+
+        FilePath path = FilePath.of("/data/cold.dat");
+        client.create(path, "alice");
+        byte[] payload = new byte[1000];
+        for (int i = 0; i < payload.length; i++) payload[i] = (byte) (i * 31 + 7);
+        client.append(path, payload);
+
+        var shard = cluster.curators().get(0).shardFor(path).orElseThrow();
+        var loc = shard.getChunkLocations(path, 0).orElseThrow();
+        var handle = loc.handle();
+
+        // Seal (precondition for EC), then re-encode replicated → RS(6,3) across all 9 D-servers.
+        assertThat(shard.seal(path, handle)).isTrue();
+        List<DserverId> fragmentHosts = new java.util.ArrayList<>(cluster.dservers().keySet());
+        ErasureCoordinator ec = new ErasureCoordinator(cluster::dserver);
+        ErasureCoordinator.EcChunk e = ec.reEncode(handle, loc.dservers(), fragmentHosts);
+
+        // 9 fragments now exist, one per host; the 3 replicas were reclaimed.
+        for (int i = 0; i < 9; i++) {
+            assertThat(cluster.dserver(fragmentHosts.get(i)).store().hasFragment(handle, i)).isTrue();
+        }
+        for (DserverId r : loc.dservers()) {
+            assertThat(cluster.dserver(r).hostedHandles()).doesNotContain(handle);
+        }
+
+        // Normal read: systematic code, no decode.
+        assertThat(ec.read(e, java.util.Set.of())).isEqualTo(payload);
+
+        // Degraded read: drop the three data-fragment hosts (D0,D1,D2) → reconstruct from the other six.
+        java.util.Set<DserverId> down =
+                java.util.Set.of(fragmentHosts.get(0), fragmentHosts.get(1), fragmentHosts.get(2));
+        assertThat(ec.read(e, down)).isEqualTo(payload);
+    }
 }
