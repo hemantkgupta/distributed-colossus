@@ -8,4 +8,6 @@ dependencies {
     // data ⟂ control invariant (a client legitimately uses both).
     implementation project(':colossus-curator')
     implementation project(':colossus-dserver')
+
+    testImplementation project(':colossus-dmclock')
 }

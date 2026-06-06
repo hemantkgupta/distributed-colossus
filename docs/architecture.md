@@ -6,12 +6,13 @@
 colossus-common  (value types + wire format; no deps)
    ↑
    ├── colossus-dmclock        → common
+   ├── colossus-erasure        → no deps
    ├── colossus-bigtable       → common
    ├── colossus-placement      → common, bigtable
    ├── colossus-dserver        → common, dmclock, bigtable        [DATA PLANE]
    ├── colossus-curator        → common, bigtable, placement      [CONTROL PLANE]
    ├── colossus-custodian      → common, bigtable, placement      [CONTROL PLANE]
-   ├── colossus-client         → common, bigtable, placement      [API]
+   ├── colossus-client         → common, bigtable, placement, curator, dserver [API]
    └── colossus-simulator      → ALL                              [HARNESS]
 ```
 
@@ -32,7 +33,7 @@ Two structural invariants encoded in the build:
 - **Metadata substrate** → BigTable (namespace rows + placement table + status rows +
   shard-ownership rows). The single source of durable truth.
 
-## Phasing — 26 CPs across 6 phases
+## Phasing — 33 CPs across 7 phases
 
 | Phase | CPs | Theme |
 |---|---|---|
@@ -42,5 +43,6 @@ Two structural invariants encoded in the build:
 | 4 | 13–17 | Curator: shard boot, ownership registry + heartbeat, CAS reassignment, namespace ops, leases |
 | 5 | 18–22 | D-server: ExtentStore + CRC, heartbeat, lease holder, daisy chain, dmClock integration |
 | 6 | 23–26 | Custodian loops, durability escalation, ColossusClient e2e, chaos simulator |
+| 7 | 27–33 | Extent sealing, pure-Java RS(6,3), simulator-level re-encode and degraded reads |
 
 Each CP is a green-build deliverable; each phase boundary is an auto-commit + push.

@@ -9,6 +9,7 @@ import colossus.dserver.Dserver;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -26,7 +27,10 @@ public final class ColossusClient {
     private static final int MAX_SHARD_RETRIES = 5;
 
     public ColossusClient(ClusterView view, int chunkSize) {
-        this.view = view;
+        this.view = Objects.requireNonNull(view, "view");
+        if (chunkSize <= 0) {
+            throw new IllegalArgumentException("chunkSize must be positive");
+        }
         this.chunkSize = chunkSize;
     }
 
@@ -54,6 +58,7 @@ public final class ColossusClient {
 
     /** Write a whole file: lay {@code data} across as many chunks as needed. */
     public void write(FilePath path, byte[] data) {
+        Objects.requireNonNull(data, "data");
         CuratorShard shard = shard(path);
         int offset = 0;
         while (offset < data.length) {
@@ -67,10 +72,13 @@ public final class ColossusClient {
 
     /** Append one chunk's worth of bytes and return the new chunk index. */
     public int append(FilePath path, byte[] bytes) {
+        Objects.requireNonNull(bytes, "bytes");
+        validateChunkPayload(bytes);
         return writeOneChunk(shard(path), path, bytes).chunkIndex();
     }
 
     private Results.AllocateChunkResult writeOneChunk(CuratorShard shard, FilePath path, byte[] piece) {
+        validateChunkPayload(piece);
         Results.AllocateChunkResult alloc = shard.allocateChunk(path);
         Dserver primary = view.dserver(alloc.primary());
         // The Curator delegated the lease to this primary; make the primary aware of it (GRANT_LEASE).
@@ -85,8 +93,24 @@ public final class ColossusClient {
         return alloc;
     }
 
+    private void validateChunkPayload(byte[] bytes) {
+        if (bytes.length > chunkSize) {
+            throw new IllegalArgumentException(
+                    "append payload length " + bytes.length + " exceeds chunkSize " + chunkSize);
+        }
+    }
+
     /** Read {@code size} bytes starting at {@code offset}, spanning chunks as needed. */
     public byte[] read(FilePath path, long offset, int size) {
+        if (offset < 0) {
+            throw new IllegalArgumentException("offset must be non-negative");
+        }
+        if (size < 0) {
+            throw new IllegalArgumentException("size must be non-negative");
+        }
+        if (size == 0) {
+            return new byte[0];
+        }
         CuratorShard shard = shard(path);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         long pos = offset;
